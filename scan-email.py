@@ -1,32 +1,55 @@
 #!/usr/bin/env python3
-# cony email scanner — reads the hcp Gmail inbox over IMAP (app password in
-# the keychain as cony-hcp-imap) and prints pings as JSON: unread messages
-# from real people/services that have sat unanswered for min_hours.
-# Called by lib.mjs scanEmail(); can also run standalone for debugging.
-import imaplib, json, re, subprocess, sys
+# cony email scanner v2 — reads the hcp Gmail inbox over IMAP and emits pings.
+# Signal over noise: a sender only pings if (a) the user has WRITTEN to them
+# before (harvested from Sent Mail, cached 24h), or (b) they match the
+# always-keep list (apple/testflight/recruiters/clients). Marketing dies here.
+import imaplib, json, os, re, subprocess, sys, time
 from email import message_from_bytes
 from email.header import decode_header, make_header
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import parseaddr, getaddresses, parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
 
 ACCOUNT = "sylvesterassiamahhcp@gmail.com"
+CACHE = os.path.expanduser("~/cony/.known-senders.json")
 MIN_HOURS = float(sys.argv[1]) if len(sys.argv) > 1 else 3
 DAYS = int(sys.argv[2]) if len(sys.argv) > 2 else 7
 
-# marketing/no-reply senders never become pings; apple/testflight are the
-# exception because acting on them is the whole point
-SKIP = re.compile(r"no-?reply|noreply|newsletter|marketing|store-news|loyalty@|deals|offers|notifications@github"
-                  r"|ziprecruiter|creditsesame|credit sesame|indeed\.com|glassdoor|klarna|expedia|bestbuy|amazon\.com"
-                  r"|coursera|linkedin\.com|substack|hello\.|email\.|promo", re.I)
-KEEP_ANYWAY = re.compile(r"apple\.com|testflight|appstoreconnect|greenhouse|bw-thinking|lever\.co|workday", re.I)
+KEEP_ANYWAY = re.compile(r"apple\.com|testflight|appstoreconnect|greenhouse|bw-thinking|lever\.co|workday|docusign|omegachain", re.I)
+NEVER = re.compile(r"mailer-daemon|postmaster", re.I)
 
-def main():
+def login():
     pw = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", "cony-hcp-imap", "-w"],
                         capture_output=True, text=True).stdout.strip()
-    if not pw:
-        print(json.dumps({"error": "keychain item cony-hcp-imap missing"})); return
     M = imaplib.IMAP4_SSL("imap.gmail.com")
     M.login(ACCOUNT, pw)
+    return M
+
+def known_senders(M):
+    try:
+        c = json.load(open(CACHE))
+        if time.time() - c["ts"] < 86400:
+            return set(c["addrs"])
+    except Exception:
+        pass
+    addrs = set()
+    M.select('"[Gmail]/Sent Mail"', readonly=True)
+    since = (datetime.now(timezone.utc) - timedelta(days=365)).strftime("%d-%b-%Y")
+    typ, data = M.search(None, "SINCE", since)
+    ids = data[0].split()
+    for i in range(0, len(ids), 50):
+        batch = b",".join(ids[i:i+50]).decode()
+        typ, msgs = M.fetch(batch, "(BODY.PEEK[HEADER.FIELDS (TO CC)])")
+        for part in msgs:
+            if isinstance(part, tuple):
+                m = message_from_bytes(part[1])
+                for _, a in getaddresses(m.get_all("To", []) + m.get_all("Cc", [])):
+                    if a: addrs.add(a.lower())
+    json.dump({"ts": time.time(), "addrs": sorted(addrs)}, open(CACHE, "w"))
+    return addrs
+
+def main():
+    M = login()
+    known = known_senders(M)
     M.select("INBOX", readonly=True)
     since = (datetime.now(timezone.utc) - timedelta(days=DAYS)).strftime("%d-%b-%Y")
     typ, data = M.search(None, "UNSEEN", "SINCE", since)
@@ -36,7 +59,10 @@ def main():
         typ, msg = M.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
         m = message_from_bytes(msg[0][1])
         name, addr = parseaddr(m.get("From", ""))
-        if SKIP.search(addr or "") and not KEEP_ANYWAY.search((addr or "") + (m.get("Subject") or "")):
+        addr = (addr or "").lower()
+        if NEVER.search(addr):
+            continue
+        if addr not in known and not KEEP_ANYWAY.search(addr + (m.get("Subject") or "")):
             continue
         try:
             dt = parsedate_to_datetime(m.get("Date"))
@@ -49,11 +75,12 @@ def main():
         pings.append({
             "channel": "email",
             "who": name or addr,
-            "what": subject[:120],
+            "reply_to": addr,
+            "what": f"Reply to this email: {subject[:100]}",
             "since": dt.isoformat(),
             "source": "hcp-imap-scan",
         })
     M.logout()
-    print(json.dumps({"scanned": len(data[0].split()), "pings": pings}))
+    print(json.dumps({"scanned": len(data[0].split()), "known_senders": len(known), "pings": pings}))
 
 main()

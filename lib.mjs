@@ -36,14 +36,22 @@ export function hoursSince(iso) {
 export function addPing(args) {
   const db = load();
   const channel = CHANNELS.includes(args.channel) ? args.channel : "other";
-  // dedupe: same person + channel + still open → refresh instead of duplicate
+  // dedupe: same person + channel open → refresh; resolved within 7 days →
+  // stay dead (the user handled it; an unread flag in gmail doesn't reopen it)
+  const who = String(args.who).toLowerCase();
   const existing = db.pings.find(p => p.status === "open" && p.channel === channel
-    && p.who.toLowerCase() === String(args.who).toLowerCase());
+    && p.who.toLowerCase() === who);
   if (existing) {
     if (args.what) existing.what = args.what;
     if (args.since) existing.since = args.since;
     save(db);
     return { ping: existing, deduped: true };
+  }
+  const recentlyDone = db.pings.find(p => p.status === "done" && p.channel === channel
+    && p.who.toLowerCase() === who
+    && p.resolved && (Date.now() - new Date(p.resolved)) < 7 * 86400000);
+  if (recentlyDone && args.source !== "manual") {
+    return { ping: recentlyDone, deduped: true };
   }
   const ping = {
     id: genId(),
@@ -55,6 +63,7 @@ export function addPing(args) {
     status: "open",
     created: new Date().toISOString().split("T")[0],
   };
+  if (args.reply_to) ping.reply_to = args.reply_to;
   db.pings.push(ping);
   save(db);
   return { ping };
@@ -121,7 +130,7 @@ export function replyPing(args) {
   const db = load();
   const p = db.pings.find(x => x.id === args.id);
   if (!p) return { error: "Ping not found." };
-  const to = args.to || (p.who.includes("@") ? p.who : null);
+  const to = args.to || p.reply_to || (p.who.includes("@") ? p.who : null);
   if (!to) return { error: `No email address for '${p.who}' — pass 'to' explicitly.` };
   if (!args.body) return { error: "Reply body required." };
   try {
