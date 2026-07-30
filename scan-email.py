@@ -15,7 +15,7 @@ MIN_HOURS = float(sys.argv[1]) if len(sys.argv) > 1 else 3
 DAYS = int(sys.argv[2]) if len(sys.argv) > 2 else 7
 
 KEEP_ANYWAY = re.compile(r"apple\.com|testflight|appstoreconnect|greenhouse|bw-thinking|lever\.co|workday|docusign|omegachain", re.I)
-NEVER = re.compile(r"mailer-daemon|postmaster", re.I)
+NEVER = re.compile(r"mailer-daemon|postmaster|sylvesterassiamah(105|pm|hcp)?@|pelotonysl@", re.I)
 
 def login():
     pw = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", "cony-hcp-imap", "-w"],
