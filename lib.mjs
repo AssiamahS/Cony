@@ -138,7 +138,7 @@ export function replyPing(args) {
     try {
       const res = execFileSync("/usr/bin/curl", ["-s", "-X", "POST", "http://localhost:8080/api/send",
         "-H", "Content-Type: application/json",
-        "-d", JSON.stringify({ recipient: jid.replace(/@.*/, ""), message: args.body })],
+        "-d", JSON.stringify({ recipient: jid.includes("@") ? jid : jid.replace(/@.*/, ""), message: args.body })],
         { encoding: "utf-8", timeout: 30000 });
       if (!JSON.parse(res).success) return { error: "Bridge refused the send.", detail: res.slice(0, 150) };
     } catch (e) {
