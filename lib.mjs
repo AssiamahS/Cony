@@ -150,6 +150,28 @@ export function replyPing(args) {
   return { ping: p, sent_to: to };
 }
 
+// Ask Claude about a ping: runs a headless claude session on the Mac with
+// the ping as context and returns the answer. Research/questions only — it
+// runs with default (safe) permissions and cannot edit anything.
+export function askClaude(args) {
+  const db = load();
+  const p = args.id ? db.pings.find(x => x.id === args.id) : null;
+  const question = String(args.question || "").trim();
+  if (!question) return { error: "Question required." };
+  const context = p
+    ? `Context: a "ping" from the user's follow-up queue.\nFrom: ${p.who}${p.reply_to ? " <" + p.reply_to + ">" : ""}\nChannel: ${p.channel}\nWhat: ${p.what}\nWaiting since: ${p.since}\n\n`
+    : "";
+  const prompt = `${context}The user asks: ${question}\n\nAnswer concisely and concretely for a phone screen. Plain sentences, no markdown headers.`;
+  try {
+    const out = execFileSync(join(homedir(), ".local", "bin", "claude"),
+      ["-p", prompt, "--output-format", "text"],
+      { encoding: "utf-8", timeout: 240000, env: { ...process.env, PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + join(homedir(), ".local", "bin") } });
+    return { answer: out.trim().slice(0, 4000) };
+  } catch (e) {
+    return { error: "Claude run failed.", detail: String(e.message || e).slice(0, 200) };
+  }
+}
+
 // Email scan: hcp Gmail over IMAP (scan-email.py, keychain app password).
 // Unread mail from real people/services older than minHours becomes pings.
 export function scanEmail(minHours = 3, days = 7) {
