@@ -130,9 +130,28 @@ export function replyPing(args) {
   const db = load();
   const p = db.pings.find(x => x.id === args.id);
   if (!p) return { error: "Ping not found." };
+  if (!args.body) return { error: "Reply body required." };
+  // whatsapp pings go out through the local bridge, not the email workflow
+  if (p.channel === "whatsapp") {
+    const jid = args.to || p.reply_to;
+    if (!jid) return { error: "No WhatsApp recipient on this ping." };
+    try {
+      const res = execFileSync("/usr/bin/curl", ["-s", "-X", "POST", "http://localhost:8080/api/send",
+        "-H", "Content-Type: application/json",
+        "-d", JSON.stringify({ recipient: jid.replace(/@.*/, ""), message: args.body })],
+        { encoding: "utf-8", timeout: 30000 });
+      if (!JSON.parse(res).success) return { error: "Bridge refused the send.", detail: res.slice(0, 150) };
+    } catch (e) {
+      return { error: "WhatsApp send failed.", detail: String(e.message || e).slice(0, 150) };
+    }
+    p.status = "done";
+    p.resolved = new Date().toISOString();
+    p.what = (p.what ? p.what + " | " : "") + "replied via cony (whatsapp)";
+    save(db);
+    return { ping: p, sent_to: jid };
+  }
   const to = args.to || p.reply_to || (p.who.includes("@") ? p.who : null);
   if (!to) return { error: `No email address for '${p.who}' — pass 'to' explicitly.` };
-  if (!args.body) return { error: "Reply body required." };
   try {
     execFileSync("/opt/homebrew/bin/gh", ["workflow", "run", "send-email.yml",
       "-R", "AssiamahS/scipio",
@@ -191,6 +210,43 @@ export function scanEmail(minHours = 3, days = 7) {
     if (!res.deduped) added.push(res.ping);
   }
   return { scanned: r.scanned, added: added.length, pings: added };
+}
+
+// WhatsApp scan: reads the whatsapp-bridge store (whatsmeow linked device).
+// Same rule as everywhere: last message in a chat is inbound and has sat
+// unanswered for min_hours → ping. Groups are skipped (g.us) — group chats
+// aren't "waiting on you" the way DMs are.
+const WA_DB = join(homedir(), "whatsapp-mcp", "whatsapp-bridge", "store", "messages.db");
+export function scanWhatsApp(minHours = 3, days = 14) {
+  const sql = `
+    SELECT c.jid, c.name, m.content, strftime('%s', m.timestamp) AS ts
+    FROM chats c
+    JOIN messages m ON m.chat_jid = c.jid
+    WHERE m.timestamp = (SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.chat_jid = c.jid)
+    AND m.is_from_me = 0
+    AND c.jid NOT LIKE '%@g.us'
+    AND ts > strftime('%s','now') - ${Math.round(days)} * 86400
+    AND ts < strftime('%s','now') - ${Math.round(minHours * 3600)};`;
+  let rows;
+  try {
+    rows = execFileSync("/usr/bin/sqlite3", ["-json", WA_DB, sql], { encoding: "utf-8" });
+  } catch (e) {
+    return { error: "Cannot read whatsapp bridge store — is com.sly.whatsapp-bridge running?", detail: String(e.message || e).slice(0, 150) };
+  }
+  const found = rows.trim() ? JSON.parse(rows) : [];
+  const added = [];
+  for (const r of found) {
+    const res = addPing({
+      channel: "whatsapp",
+      who: r.name || r.jid.split("@")[0],
+      reply_to: r.jid,
+      what: `Reply on WhatsApp: ${(r.content || "(media)").slice(0, 100)}`,
+      since: new Date(r.ts * 1000).toISOString(),
+      source: "whatsapp-scan",
+    });
+    if (!res.deduped) added.push(res.ping);
+  }
+  return { scanned: found.length, added: added.length, pings: added };
 }
 
 // iMessage scan: conversations where the LAST message is inbound and older

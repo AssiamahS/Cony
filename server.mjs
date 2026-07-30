@@ -8,7 +8,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail, replyPing, CHANNELS } from "./lib.mjs";
+import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail, scanWhatsApp, replyPing, CHANNELS } from "./lib.mjs";
 
 const server = new Server({ name: "cony", version: "1.0.0" }, {
   capabilities: { tools: {} },
@@ -91,6 +91,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "cony_scan_whatsapp",
+      description: "Scan WhatsApp (via the linked-device bridge) for DM conversations where the last message is inbound and unanswered, and add pings. Groups are skipped. cony_reply on a whatsapp ping sends through the bridge as the user.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          min_hours: { type: "number", description: "Only flag if unanswered this many hours (default 3)" },
+          days: { type: "number", description: "Look-back window in days (default 14)" },
+        },
+      },
+    },
+    {
       name: "cony_scan_imessage",
       description: "Scan the Mac's Messages database for conversations where the last message is inbound (user never replied) and add them as pings. Requires Full Disk Access; returns a clear error if not granted.",
       inputSchema: {
@@ -141,6 +152,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       const r = scanEmail(args.min_hours, args.days);
       if (r.error) return text(r.error + (r.detail ? " " + r.detail : ""));
       return text(`Scanned ${r.scanned} unread emails, added ${r.added} new pings.`);
+    }
+    case "cony_scan_whatsapp": {
+      const r = scanWhatsApp(args.min_hours, args.days);
+      if (r.error) return text(r.error + (r.detail ? " " + r.detail : ""));
+      return text(`Scanned ${r.scanned} unanswered WhatsApp chats, added ${r.added} new pings.`);
     }
     case "cony_scan_imessage": {
       const r = scanIMessage(args.min_hours, args.days);

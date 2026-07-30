@@ -6,7 +6,7 @@ import { execSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail, replyPing, askClaude } from "./lib.mjs";
+import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail, scanWhatsApp, replyPing, askClaude } from "./lib.mjs";
 
 const PORT = parseInt(process.env.CONY_API_PORT || "8797");
 const KEY_PATH = join(homedir(), ".config", "cony", "api-key");
@@ -33,6 +33,7 @@ const routes = {
   "POST /ask": (b) => askClaude(b),
   "POST /scan/imessage": (b) => scanIMessage(b.min_hours, b.days),
   "POST /scan/email": (b) => scanEmail(b.min_hours, b.days),
+  "POST /scan/whatsapp": (b) => scanWhatsApp(b.min_hours, b.days),
 };
 
 const server = createServer((req, res) => {
