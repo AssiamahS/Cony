@@ -219,14 +219,14 @@ export function scanEmail(minHours = 3, days = 7) {
 const WA_DB = join(homedir(), "whatsapp-mcp", "whatsapp-bridge", "store", "messages.db");
 export function scanWhatsApp(minHours = 3, days = 14) {
   const sql = `
-    SELECT c.jid, c.name, m.content, strftime('%s', m.timestamp) AS ts
+    SELECT c.jid, c.name, m.content, CAST(strftime('%s', m.timestamp) AS INTEGER) AS ts
     FROM chats c
     JOIN messages m ON m.chat_jid = c.jid
     WHERE m.timestamp = (SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.chat_jid = c.jid)
     AND m.is_from_me = 0
     AND c.jid NOT LIKE '%@g.us'
-    AND ts > strftime('%s','now') - ${Math.round(days)} * 86400
-    AND ts < strftime('%s','now') - ${Math.round(minHours * 3600)};`;
+    AND ts > CAST(strftime('%s','now') AS INTEGER) - ${Math.round(days)} * 86400
+    AND ts < CAST(strftime('%s','now') AS INTEGER) - ${Math.round(minHours * 3600)};`;
   let rows;
   try {
     rows = execFileSync("/usr/bin/sqlite3", ["-json", WA_DB, sql], { encoding: "utf-8" });
