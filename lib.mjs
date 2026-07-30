@@ -217,28 +217,58 @@ export function scanEmail(minHours = 3, days = 7) {
 // unanswered for min_hours → ping. Groups are skipped (g.us) — group chats
 // aren't "waiting on you" the way DMs are.
 const WA_DB = join(homedir(), "whatsapp-mcp", "whatsapp-bridge", "store", "messages.db");
+const WA_STORE = join(homedir(), "whatsapp-mcp", "whatsapp-bridge", "store", "whatsapp.db");
+
+function waSql(sql) {
+  return execFileSync("/usr/bin/sqlite3", ["-json", WA_DB, `ATTACH '${WA_STORE}' AS wa; ${sql}`], { encoding: "utf-8" });
+}
+
+// Resolve a chat jid (phone or privacy @lid) to the contact's push name.
+const WA_NAME_JOIN = `
+  LEFT JOIN wa.whatsmeow_lid_map lm ON c.jid = lm.lid || '@lid'
+  LEFT JOIN wa.whatsmeow_contacts ct ON ct.their_jid = c.jid
+  LEFT JOIN wa.whatsmeow_contacts ct2 ON ct2.their_jid = lm.pn || '@s.whatsapp.net'`;
+const WA_DISPLAY = `COALESCE(NULLIF(c.name,''), NULLIF(ct.push_name,''), NULLIF(ct2.push_name,''), c.jid)`;
+
 export function scanWhatsApp(minHours = 3, days = 14) {
-  const sql = `
-    SELECT c.jid, c.name, m.content, CAST(strftime('%s', m.timestamp) AS INTEGER) AS ts
-    FROM chats c
-    JOIN messages m ON m.chat_jid = c.jid
-    WHERE m.timestamp = (SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.chat_jid = c.jid)
-    AND m.is_from_me = 0
-    AND c.jid NOT LIKE '%@g.us'
-    AND ts > CAST(strftime('%s','now') AS INTEGER) - ${Math.round(days)} * 86400
-    AND ts < CAST(strftime('%s','now') AS INTEGER) - ${Math.round(minHours * 3600)};`;
-  let rows;
+  const winLo = `CAST(strftime('%s','now') AS INTEGER) - ${Math.round(days)} * 86400`;
+  const winHi = `CAST(strftime('%s','now') AS INTEGER) - ${Math.round(minHours * 3600)}`;
+  let dmRows, mentionRows;
   try {
-    rows = execFileSync("/usr/bin/sqlite3", ["-json", WA_DB, sql], { encoding: "utf-8" });
+    // DMs: last message inbound and unanswered
+    dmRows = waSql(`
+      SELECT c.jid, ${WA_DISPLAY} AS display, m.content, CAST(strftime('%s', m.timestamp) AS INTEGER) AS ts
+      FROM chats c
+      JOIN messages m ON m.chat_jid = c.jid
+      ${WA_NAME_JOIN}
+      WHERE m.timestamp = (SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.chat_jid = c.jid)
+      AND m.is_from_me = 0
+      AND c.jid NOT LIKE '%@g.us'
+      AND ts > ${winLo} AND ts < ${winHi};`);
+    // Groups: only messages that @-mention the user (their own lid), with no
+    // later message from the user in that group
+    mentionRows = waSql(`
+      SELECT c.jid, COALESCE(NULLIF(c.name,''), c.jid) AS display, m.content, m.sender,
+             CAST(strftime('%s', m.timestamp) AS INTEGER) AS ts
+      FROM messages m
+      JOIN chats c ON c.jid = m.chat_jid
+      WHERE c.jid LIKE '%@g.us'
+      AND m.is_from_me = 0
+      AND m.content LIKE '%@' || (SELECT lid FROM wa.whatsmeow_lid_map WHERE pn = (
+        SELECT substr(jid, 1, instr(jid, ':') - 1) FROM wa.whatsmeow_device LIMIT 1)) || '%'
+      AND NOT EXISTS (SELECT 1 FROM messages m3 WHERE m3.chat_jid = m.chat_jid
+        AND m3.is_from_me = 1 AND m3.timestamp > m.timestamp)
+      AND ts > ${winLo} AND ts < ${winHi};`);
   } catch (e) {
     return { error: "Cannot read whatsapp bridge store — is com.sly.whatsapp-bridge running?", detail: String(e.message || e).slice(0, 150) };
   }
-  const found = rows.trim() ? JSON.parse(rows) : [];
+  const dms = dmRows.trim() ? JSON.parse(dmRows) : [];
+  const mentions = mentionRows.trim() ? JSON.parse(mentionRows) : [];
   const added = [];
-  for (const r of found) {
+  for (const r of dms) {
     const res = addPing({
       channel: "whatsapp",
-      who: r.name || r.jid.split("@")[0],
+      who: r.display === r.jid ? "WhatsApp " + r.jid.split("@")[0].slice(-4) : r.display,
       reply_to: r.jid,
       what: `Reply on WhatsApp: ${(r.content || "(media)").slice(0, 100)}`,
       since: new Date(r.ts * 1000).toISOString(),
@@ -246,7 +276,18 @@ export function scanWhatsApp(minHours = 3, days = 14) {
     });
     if (!res.deduped) added.push(res.ping);
   }
-  return { scanned: found.length, added: added.length, pings: added };
+  for (const r of mentions) {
+    const res = addPing({
+      channel: "whatsapp",
+      who: `${r.display} (group)`,
+      reply_to: r.jid,
+      what: `You were mentioned: ${(r.content || "").replace(/@\d+/g, "@you").slice(0, 100)}`,
+      since: new Date(r.ts * 1000).toISOString(),
+      source: "whatsapp-mention-scan",
+    });
+    if (!res.deduped) added.push(res.ping);
+  }
+  return { scanned: dms.length + mentions.length, added: added.length, pings: added };
 }
 
 // iMessage scan: conversations where the LAST message is inbound and older
