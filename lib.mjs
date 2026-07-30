@@ -114,6 +114,27 @@ export function brief() {
   return lines.join("\n");
 }
 
+// Email scan: hcp Gmail over IMAP (scan-email.py, keychain app password).
+// Unread mail from real people/services older than minHours becomes pings.
+export function scanEmail(minHours = 3, days = 7) {
+  let out;
+  try {
+    out = execFileSync("/usr/bin/python3",
+      [new URL("./scan-email.py", import.meta.url).pathname, String(minHours), String(days)],
+      { encoding: "utf-8", timeout: 60000 });
+  } catch (e) {
+    return { error: "Email scan failed.", detail: String(e.message || e).slice(0, 200) };
+  }
+  const r = JSON.parse(out);
+  if (r.error) return r;
+  const added = [];
+  for (const p of r.pings) {
+    const res = addPing(p);
+    if (!res.deduped) added.push(res.ping);
+  }
+  return { scanned: r.scanned, added: added.length, pings: added };
+}
+
 // iMessage scan: conversations where the LAST message is inbound and older
 // than min_hours. Requires Full Disk Access for the process running this
 // (System Settings → Privacy & Security → Full Disk Access).

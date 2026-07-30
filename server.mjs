@@ -8,7 +8,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, CHANNELS } from "./lib.mjs";
+import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail, CHANNELS } from "./lib.mjs";
 
 const server = new Server({ name: "cony", version: "1.0.0" }, {
   capabilities: { tools: {} },
@@ -66,6 +66,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {} },
     },
     {
+      name: "cony_scan_email",
+      description: "Scan the hcp Gmail inbox over IMAP (keychain app password) for unread mail from real people/services sitting unanswered, and add pings. Apple/TestFlight/recruiter senders always count; marketing noise is skipped.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          min_hours: { type: "number", description: "Only flag if unanswered this many hours (default 3)" },
+          days: { type: "number", description: "Look-back window in days (default 7)" },
+        },
+      },
+    },
+    {
       name: "cony_scan_imessage",
       description: "Scan the Mac's Messages database for conversations where the last message is inbound (user never replied) and add them as pings. Requires Full Disk Access; returns a clear error if not granted.",
       inputSchema: {
@@ -107,6 +118,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
     case "cony_brief":
       return text(brief());
+    case "cony_scan_email": {
+      const r = scanEmail(args.min_hours, args.days);
+      if (r.error) return text(r.error + (r.detail ? " " + r.detail : ""));
+      return text(`Scanned ${r.scanned} unread emails, added ${r.added} new pings.`);
+    }
     case "cony_scan_imessage": {
       const r = scanIMessage(args.min_hours, args.days);
       if (r.error) return text(r.error);
