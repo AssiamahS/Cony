@@ -56,13 +56,19 @@ def main():
     cutoff = datetime.now(timezone.utc) - timedelta(hours=MIN_HOURS)
     pings = []
     for mid in data[0].split():
-        typ, msg = M.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+        typ, msg = M.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE LIST-UNSUBSCRIBE PRECEDENCE)])")
         m = message_from_bytes(msg[0][1])
         name, addr = parseaddr(m.get("From", ""))
         addr = (addr or "").lower()
         if NEVER.search(addr):
             continue
-        if addr not in known and not KEEP_ANYWAY.search(addr + (m.get("Subject") or "")):
+        # unknown senders still ping if they look like a human: no bulk-mail
+        # machinery (List-Unsubscribe / Precedence: bulk) and not a no-reply.
+        is_known = addr in known or KEEP_ANYWAY.search(addr + (m.get("Subject") or ""))
+        looks_human = (not m.get("List-Unsubscribe")
+                       and (m.get("Precedence") or "").lower() not in ("bulk", "list")
+                       and not re.search(r"no-?reply|donotreply|notifications?@|automated", addr))
+        if not is_known and not looks_human:
             continue
         try:
             dt = parsedate_to_datetime(m.get("Date"))
