@@ -114,6 +114,33 @@ export function brief() {
   return lines.join("\n");
 }
 
+// Reply as the user: dispatches the scipio send-email workflow, which sends
+// from sylvesterassiamah105@gmail.com via the Gmail app password in CI.
+// Resolves the ping on successful dispatch.
+export function replyPing(args) {
+  const db = load();
+  const p = db.pings.find(x => x.id === args.id);
+  if (!p) return { error: "Ping not found." };
+  const to = args.to || (p.who.includes("@") ? p.who : null);
+  if (!to) return { error: `No email address for '${p.who}' — pass 'to' explicitly.` };
+  if (!args.body) return { error: "Reply body required." };
+  try {
+    execFileSync("/opt/homebrew/bin/gh", ["workflow", "run", "send-email.yml",
+      "-R", "AssiamahS/scipio",
+      "-f", `to=${to}`,
+      "-f", `subject=${args.subject || "Re: " + (p.what || "your message")}`,
+      "-f", `body=${args.body}`,
+    ], { encoding: "utf-8", timeout: 30000, env: { ...process.env, PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" } });
+  } catch (e) {
+    return { error: "Send dispatch failed.", detail: String(e.message || e).slice(0, 200) };
+  }
+  p.status = "done";
+  p.resolved = new Date().toISOString();
+  p.what = (p.what ? p.what + " | " : "") + "replied via cony";
+  save(db);
+  return { ping: p, sent_to: to };
+}
+
 // Email scan: hcp Gmail over IMAP (scan-email.py, keychain app password).
 // Unread mail from real people/services older than minHours becomes pings.
 export function scanEmail(minHours = 3, days = 7) {

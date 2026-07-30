@@ -8,7 +8,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail, CHANNELS } from "./lib.mjs";
+import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail, replyPing, CHANNELS } from "./lib.mjs";
 
 const server = new Server({ name: "cony", version: "1.0.0" }, {
   capabilities: { tools: {} },
@@ -66,6 +66,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {} },
     },
     {
+      name: "cony_reply",
+      description: "Reply to an email ping AS THE USER (sends from sylvesterassiamah105@gmail.com via the scipio workflow) and mark the ping resolved. Body must sound human: no em dashes, plain sentences. Use only when the user asked for the reply or approved the draft.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Ping id" },
+          to: { type: "string", description: "Recipient (defaults to the ping's who if it's an address)" },
+          subject: { type: "string" },
+          body: { type: "string", description: "The reply text, in the user's plain voice" },
+        },
+        required: ["id", "body"],
+      },
+    },
+    {
       name: "cony_scan_email",
       description: "Scan the hcp Gmail inbox over IMAP (keychain app password) for unread mail from real people/services sitting unanswered, and add pings. Apple/TestFlight/recruiter senders always count; marketing noise is skipped.",
       inputSchema: {
@@ -118,6 +132,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
     case "cony_brief":
       return text(brief());
+    case "cony_reply": {
+      const r = replyPing(args);
+      if (r.error) return text(r.error + (r.detail ? " " + r.detail : ""));
+      return text(`Replied to ${r.sent_to} as the user; ping [${r.ping.id}] resolved.`);
+    }
     case "cony_scan_email": {
       const r = scanEmail(args.min_hours, args.days);
       if (r.error) return text(r.error + (r.detail ? " " + r.detail : ""));

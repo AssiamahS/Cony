@@ -6,7 +6,7 @@ import { execSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail } from "./lib.mjs";
+import { addPing, resolvePing, snoozePing, openPings, brief, scanIMessage, scanEmail, replyPing } from "./lib.mjs";
 
 const PORT = parseInt(process.env.CONY_API_PORT || "8797");
 const KEY_PATH = join(homedir(), ".config", "cony", "api-key");
@@ -29,6 +29,7 @@ const routes = {
   "POST /add": (b) => addPing(b),
   "POST /resolve": (b) => resolvePing(b),
   "POST /snooze": (b) => snoozePing(b),
+  "POST /reply": (b) => replyPing(b),
   "POST /scan/imessage": (b) => scanIMessage(b.min_hours, b.days),
   "POST /scan/email": (b) => scanEmail(b.min_hours, b.days),
 };
@@ -60,7 +61,20 @@ const server = createServer((req, res) => {
   });
 });
 
-const BIND = tailscaleIp();
-server.listen(PORT, BIND, () => {
-  console.log(`cony-api listening on http://${BIND}:${PORT}${API_KEY ? " (key required)" : ""}`);
+// Tailscale's interface can be briefly gone right after boot/restart —
+// retry instead of crash-looping under launchd KeepAlive.
+function start() {
+  const BIND = tailscaleIp();
+  server.listen(PORT, BIND, () => {
+    console.log(`cony-api listening on http://${BIND}:${PORT}${API_KEY ? " (key required)" : ""}`);
+  });
+}
+server.on("error", (e) => {
+  if (e.code === "EADDRNOTAVAIL" || e.code === "EADDRINUSE") {
+    console.log(`listen ${e.code}, retrying in 5s`);
+    setTimeout(start, 5000);
+  } else {
+    throw e;
+  }
 });
+start();
