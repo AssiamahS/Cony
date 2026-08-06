@@ -244,6 +244,7 @@ export function scanWhatsApp(minHours = 3, days = 14) {
       WHERE m.timestamp = (SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.chat_jid = c.jid)
       AND m.is_from_me = 0
       AND c.jid NOT LIKE '%@g.us'
+      AND c.jid != 'status@broadcast'
       AND ts > ${winLo} AND ts < ${winHi};`);
     // Groups: only messages that @-mention the user (their own lid), with no
     // later message from the user in that group

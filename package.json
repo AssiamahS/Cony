@@ -1,8 +1,8 @@
 {
   "name": "cony",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "type": "module",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.18"
+    "@modelcontextprotocol/sdk": "^1.0.19"
   }
 }

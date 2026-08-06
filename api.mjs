@@ -2,7 +2,7 @@
 // cony-api — Tailscale-only HTTP face of the ping queue, for ConyOS,
 // the watch, and the alexa brief. Mirrors pm's api.mjs conventions.
 import { createServer } from "http";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -20,6 +20,19 @@ function tailscaleIp() {
     } catch {}
   }
   return "127.0.0.1"; // no tailscale found — stay loopback-only, never LAN
+}
+
+// Mirror the ping list to the cloud relay (relay/worker.mjs) so the phone
+// can read it over plain HTTPS when it's off the tailnet. Fire-and-forget
+// child so scans never block the event loop; push.mjs no-ops without
+// ~/.config/cony/relay.json.
+const PUSH_SCRIPT = new URL("./push.mjs", import.meta.url).pathname;
+function cloudPush(scan = false) {
+  const args = [PUSH_SCRIPT];
+  if (scan) args.push("--scan");
+  try {
+    spawn(process.execPath, args, { stdio: "ignore", detached: true }).unref();
+  } catch {}
 }
 
 const routes = {
@@ -57,6 +70,7 @@ const server = createServer((req, res) => {
       const parsed = body ? JSON.parse(body) : {};
       const result = handler(parsed);
       send(result.error ? 400 : 200, result);
+      if (!result.error && url.pathname !== "/ask") cloudPush();
     } catch (e) {
       send(500, { error: String(e.message || e) });
     }
@@ -69,6 +83,8 @@ function start() {
   const BIND = tailscaleIp();
   server.listen(PORT, BIND, () => {
     console.log(`cony-api listening on http://${BIND}:${PORT}${API_KEY ? " (key required)" : ""}`);
+    cloudPush();
+    setInterval(() => cloudPush(true), 15 * 60 * 1000);
   });
 }
 server.on("error", (e) => {

@@ -1,0 +1,11 @@
+name = "cony-relay"
+main = "worker.mjs"
+compatibility_date = "2026-08-01"
+
+kv_namespaces = [
+  { binding = "CONY_KV", id = "600761d94903489f9af80e3f44938816" }
+]
+
+# secrets (set via `npx wrangler secret put`):
+#   PUSH_KEY — Mac -> worker, guards POST /push
+#   APP_KEY  — phone -> worker, guards GET /items
