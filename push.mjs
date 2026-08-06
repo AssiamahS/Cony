@@ -7,7 +7,7 @@
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { openPings, scanWhatsApp, scanEmail, scanIMessage } from "./lib.mjs";
+import { openPings, scanWhatsApp, scanEmail } from "./lib.mjs";
 
 const CFG_PATH = join(homedir(), ".config", "cony", "relay.json");
 if (!existsSync(CFG_PATH)) {
@@ -17,10 +17,11 @@ if (!existsSync(CFG_PATH)) {
 const cfg = JSON.parse(readFileSync(CFG_PATH, "utf-8"));
 
 if (process.argv.includes("--scan")) {
+  // no imessage here on purpose: the unattended cycle turned every unanswered
+  // text and spam shortcode into a ping. imessage stays manual (POST /scan/imessage).
   const scans = [
     ["whatsapp", scanWhatsApp],
     ["email", scanEmail],
-    ["imessage", scanIMessage],
   ];
   for (const [name, fn] of scans) {
     try {
